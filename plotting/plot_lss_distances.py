@@ -13,7 +13,8 @@ from radiofisher.units import *
 
 cosmo = rf.experiments.cosmo
 
-names = ['EuclidRef_paper', 'exptL_paper', 'aexptM_paper', 'exptS_paper']
+#names = ['EuclidRef_paper', 'exptL_paper', 'aexptM_paper', 'exptS_paper']
+names = ['exptS_1bin_4000hr']
 colours = ['#CC0000', '#1619A1', '#5B9C0A', '#990A9C'] # DETF/F/M/S
 labels = ['DETF IV', 'Facility', 'Stage II', 'Stage I']
 linestyle = [[2, 4, 6, 4], [], [8, 4], [3, 4]]

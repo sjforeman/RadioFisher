@@ -39,7 +39,7 @@ RSD_FUNCTION = 'kaiser'
 # Location of CAMB fiducial P(k) file
 # NOTE: Currently expects CAMB P(k) needs to be at chosen z value (z=0 here).
 CAMB_KMAX = 20. / 0.7 # Max. k for CAMB, in h Mpc^-1
-CAMB_EXEC = "/home/phil/lynx/oslo/bao21cm/camb" # Directory containing camb executable
+CAMB_EXEC = "/Users/sforeman/Dropbox/Research/CHIME/py/overview_paper_forecasts/venv/bin/" # Directory containing camb executable
 
 
 ################################################################################
