@@ -190,7 +190,7 @@ ax2.set_xlabel(r'$\nu\;[{\rm MHz}]$')
 
 # Load measurements
 ext_points = np.loadtxt(
-    "forecast_inputs/previous_dv_measurements.dat",
+    "forecast_inputs/previous_dv_measurements.txt",
     dtype={
         "names": ("Name", "val_mean", "val_low", "val_high", "z_mean", "z_low", "z_high", "arXiv_num"),
         "formats": ("|S15", float, float, float, float, float, float, float)

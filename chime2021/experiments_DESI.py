@@ -94,8 +94,8 @@ zcenter_desi = 0.5 * (zmin_desi + zmax_desi)
 
 # Load DESI redshift distributions, in units of gal / dz / deg^2
 desi_raw_dist = {}
-desi_raw_dist['bgs'] = np.loadtxt('forecast_inputs/desi_bgs_nz_table2.3.dat').T
-desi_other_dist = np.loadtxt('forecast_inputs/desi_lrg_elg_qso_nz_table2.3.dat').T
+desi_raw_dist['bgs'] = np.loadtxt('forecast_inputs/desi_bgs_nz_table2.3.txt').T
+desi_other_dist = np.loadtxt('forecast_inputs/desi_lrg_elg_qso_nz_table2.3.txt').T
 for s, c in zip(['elg', 'lrg', 'qso'], [1, 2, 3]):
     desi_raw_dist[s] = desi_other_dist[[0, c]]
 
