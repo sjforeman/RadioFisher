@@ -1,4 +1,4 @@
 Forecast Output Directory
 -------------------------
 
-Fisher matrices are related information will be written to this directory.
+Fisher matrices and related information will be written to this directory.
