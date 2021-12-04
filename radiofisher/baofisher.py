@@ -1352,13 +1352,28 @@ def expand_fisher_with_kbinned_parameter(F_old, pbins, pnew):
 # Noise and signal covariances
 ################################################################################
 
+def Tsys_tot(z, expt, inst_label='Tinst'):
+    """
+    Compute T_sys(z) as a sum of T_inst and T_sky(z),
+    unless a total T_sys(z) is specified as an input experiment parameter,
+    in which case that is used instead.
+    """
+    if 'Tsys_tot(z)' in expt.keys():
+        Tsys = expt['Tsys_tot(z)'](z)
+    else:
+        Tsky = 60e3 * (300.*(1. + z)/expt['nu_line'])**2.55 # Foreground sky signal (mK)
+        Tsys = expt[inst_label] + Tsky # System temperature
+        if 'Tsky_factor' in expt.keys():
+            Tsys += expt['Tsky_factor'] * Tsky
+
+    return Tsys
+
 def noise_rms_per_voxel(z, expt):
     """
     Convenience function for calculating the rms noise per voxel,
     (sigma_T)^2 = Tsys^2 . Sarea / (dnu . t_tot . theta_b^2 . Nd . Nb )
     """
-    Tsky = 60e3 * (300.*(1. + z)/expt['nu_line'])**2.55 # Foreground sky signal (mK)
-    Tsys = expt['Tinst'] + Tsky # System temperature
+    Tsys = Tsys_tot(z, expt)
     I = 1. / (expt['Ndish'] * expt['Nbeam']) # Dish multiplicity
     theta_fwhm = 3e8 * (1. + z) / (1e6 * expt['nu_line']) / expt['Ddish'] # Beam FWHM
 
@@ -1371,8 +1386,7 @@ def noise_rms_per_voxel_interferom(z, expt):
     Convenience function for calculating the rms noise per voxel,
     (sigma_T)^2 = Tsys^2 . Sarea / (dnu . t_tot . n(u)) * FOV^2
     """
-    Tsky = 60e3 * (300.*(1. + z)/expt['nu_line'])**2.55 # Foreground sky signal (mK)
-    Tsys = expt['Tinst'] + Tsky # System temperature
+    Tsys = Tsys_tot(z, expt)
 
     nu = expt['nu_line'] / (1. + z)
     l = 3e8 / (nu*1e6)
@@ -1487,9 +1501,7 @@ def Cnoise(q, y, cosmo, expt, cv=False):
 
     # Calculate base noise properties
     Vsurvey = expt['Sarea'] * expt['dnutot'] / expt['nu_line']
-    Tsky = 60e3 * (300.*(1.+c['z']) / expt['nu_line'])**2.55 # Temp. of sky (mK)
-    Tsys = expt['Tinst'] + Tsky
-    if 'Tsky_factor' in list(expt.keys()): Tsys += expt['Tsky_factor'] * Tsky
+    Tsys = Tsys_tot(c['z'], expt)
     noise = Tsys**2. * Vsurvey / (npol * expt['ttot'] * expt['dnutot'])
     if cv: noise = 1. # Cosmic variance-limited calc.
 
@@ -1550,7 +1562,7 @@ def Cnoise(q, y, cosmo, expt, cv=False):
             # Calculate properties of sub-array 2
             Aeff2 = effic2 * 0.25 * np.pi * expt['Ddish2']**2. \
                     if 'Aeff2' not in list(expt.keys()) else expt['Aeff2']
-            Tsys2 = expt['Tinst2'] + Tsky
+            Tsys2 - Tsys_tot(z, expt, inst_label='Tinst2')
             theta_b2 = l / expt['Ddish2']
             Nd1 = expt['Ndish']; Nd2 = expt['Ndish2']
 
