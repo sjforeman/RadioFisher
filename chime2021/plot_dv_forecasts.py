@@ -25,7 +25,7 @@ cosmo = rf.experiments.cosmo
 # Set experiment names and plotting styles
 names_fisher = ['gDESI_combinedmnu006', 'yCHIMEmnu006']
 names = ['gDESI_combinedmnu006', 'DESI_Lyalpha', 'yCHIMEmnu006']
-plot_colors = ['black', colors[0], colors[1]]
+plot_colors = [colors[3], colors[0], colors[1]]
 plot_labels = ['DESI LRG+ELG+QSO', r'DESI Lyman-$\alpha$ Forest', 'CHIME']
 plot_ls = ['.', '.', '.']
 plot_offset = [0, 0.0, 0.03]
@@ -117,22 +117,6 @@ err_survey["DESI_Lyalpha"] = (
 
 
 #############
-# Plot fractional D_V(z) errorbars
-#############
-
-for k in range(len(names)):
-    ax[0].errorbar(
-        zc_survey[names[k]] + plot_offset[k],
-        np.ones_like(err_survey[names[k]]),
-        yerr=err_survey[names[k]],
-        fmt='none',
-        c=plot_colors[k],
-        label=plot_labels[k],
-        capsize=3
-    )
-
-
-#############
 # Plot persistent RFI bands for CHIME
 #############
 
@@ -191,7 +175,7 @@ ax[0].set_ylim(0.95, 1.05)
 # ax[0].set_yticks(np.arange(0.95, 1.051, 0.01))
 ax[0].set_ylabel(r"$D_V \,/\, D_V^{\rm fid}$")
 ax[0].set_xlabel(r"$z$")
-ax[0].legend(ncol=2, loc='upper center')
+# ax[0].legend(ncol=2, loc='upper center')
 ax[0].grid(ls=':')
 ax[0].tick_params(axis='x')
 ax[0].set_xticks([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5])
@@ -208,6 +192,38 @@ freq_labels = [r'$' + str(x) + '$' for x in freq_labels_numbers]
 ax2.tick_params(axis='x')
 ax2.set_xticklabels(freq_labels)
 ax2.set_xlabel(r'$\nu\;[{\rm MHz}]$')
+
+#############
+# Plot fractional D_V(z) errorbars
+#############
+
+# Plot DESI forecasts in normal axis
+for k in range(len(names)-1):
+    ax[0].errorbar(
+        zc_survey[names[k]] + plot_offset[k],
+        np.ones_like(err_survey[names[k]]),
+        yerr=err_survey[names[k]],
+        fmt='none',
+        c=plot_colors[k],
+        label=plot_labels[k],
+        capsize=3
+    )
+
+# Plot CHIME forecasts in twinned axis, so we can show a separate legend
+k = -1
+ax2.errorbar(
+    zc_survey[names[k]] + plot_offset[k],
+    np.ones_like(err_survey[names[k]]),
+    yerr=err_survey[names[k]],
+    fmt='none',
+    c=plot_colors[k],
+    label=plot_labels[k],
+    capsize=3
+)
+
+# Show two legends: one with DESI, one with CHIME
+ax[0].legend()
+ax2.legend()
 
 
 #############
