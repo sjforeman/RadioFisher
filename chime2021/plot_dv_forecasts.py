@@ -23,11 +23,12 @@ colors = prop_cycle.by_key()['color']
 cosmo = rf.experiments.cosmo
 
 # Set experiment names and plotting styles
-names = ['gDESI_combined', 'yCHIME']
-plot_colors = ['black', colors[1]]
-plot_labels = ['DESI', 'CHIME']
-plot_ls = ['.', '.']
-plot_offset = [0, 0.03]
+names_fisher = ['gDESI_combinedmnu006', 'yCHIMEmnu006']
+names = ['gDESI_combinedmnu006', 'DESI_Lyalpha', 'yCHIMEmnu006']
+plot_colors = ['black', colors[0], colors[1]]
+plot_labels = ['DESI LRG+ELG+QSO', r'DESI Lyman-$\alpha$ Forest', 'CHIME']
+plot_ls = ['.', '.', '.']
+plot_offset = [0, 0.0, 0.03]
 
 # Define plot size
 fig = plt.figure(figsize=(4.7, 3.2 * 2))
@@ -35,14 +36,15 @@ ax = fig.subplots(2, 1)
 
 
 #############
-# Plot fractional D_V(z) errorbars
+# Compute fractional D_V(z) errorbars
 #############
 
-# Loop through surveys
+# Compute and save fractional D_V(z) errorbars for surveys we have Fisher
+# matrices for
 zc_survey = {}
 err_survey = {}
-for k in range(len(names)):
-    root = "forecast_outputs/" + names[k]
+for name in names_fisher:
+    root = "forecast_outputs/" + name
 
     # Load cosmo fns.
     dat = np.atleast_2d( np.genfromtxt(root+"-cosmofns-zc.dat") ).T
@@ -94,16 +96,40 @@ for k in range(len(names)):
     indexes = [pFF, pDV]
     fn_vals = [Fz, DV]
 
-    # Plot errors as fn. of redshift
-    err = errs[indexes[1]] / fn_vals[1]
-    ax[0].errorbar(
-        zc + plot_offset[k], np.ones_like(err), yerr=err, fmt='none',
-        c=plot_colors[k], label=plot_labels[k], capsize=3
-    )
+    # Save fractional D_V(z) errorbars and z values
+    err_survey[name] = errs[indexes[1]] / fn_vals[1]
+    zc_survey[name] = zc
 
-    # Save z and error values for later
-    zc_survey[names[k]] = zc
-    err_survey[names[k]] = err
+
+# Now, load saved fractional D_A and H errorbars for DESI Lyman-alpha
+# forecasts. We don't compute these ourselves, but simply take them from
+# Table 2.7 of Aghamousa et al. 2016
+zc_survey["DESI_Lyalpha"], desi_lyalpha_fracsigmaDA, desi_lyalpha_fracsigmaH = (
+    np.loadtxt("forecast_inputs/desi_lyalpha_BAO_errorbars_table2.7.txt").T
+)
+# Assuming that the D_A and H errorbars are uncorrelated (which is all we can
+# do without more information), we translate them to fractional D_V errorbars
+# via simple error propagation in the expression for D_V.
+err_survey["DESI_Lyalpha"] = (
+    (4 / 9) * desi_lyalpha_fracsigmaDA ** 2
+    + (1 / 9) * desi_lyalpha_fracsigmaH ** 2
+) ** 0.5 / 100
+
+
+#############
+# Plot fractional D_V(z) errorbars
+#############
+
+for k in range(len(names)):
+    ax[0].errorbar(
+        zc_survey[names[k]] + plot_offset[k],
+        np.ones_like(err_survey[names[k]]),
+        yerr=err_survey[names[k]],
+        fmt='none',
+        c=plot_colors[k],
+        label=plot_labels[k],
+        capsize=3
+    )
 
 
 #############
@@ -136,10 +162,10 @@ bad_redshifts = 1420.4 / bad_frequencies - 1
 for i in range(bad_redshifts.shape[0]):
     ax[0].add_patch(Rectangle((bad_redshifts[i, 0], 0.95), bad_redshifts[i, 1]-bad_redshifts[i, 0], 0.1,
              edgecolor = 'none',
-             facecolor = colors[0],
+             facecolor = colors[2],
              fill=True,
              lw=0,
-             alpha=0.3))
+             alpha=0.4))
 
 ## Also shade z regions that are beyond CHIME band
 # ax.add_patch(Rectangle((0.5, 0.96), (1420.4/800 - 1) - 0.5, 0.08,
@@ -160,12 +186,12 @@ for i in range(bad_redshifts.shape[0]):
 # Set aesthetics for upper panel
 #############
 
-ax[0].set_xlim(0.5, 2.6)
+ax[0].set_xlim(0.5, 2.55)
 ax[0].set_ylim(0.95, 1.05)
 # ax[0].set_yticks(np.arange(0.95, 1.051, 0.01))
 ax[0].set_ylabel(r"$D_V \,/\, D_V^{\rm fid}$")
 ax[0].set_xlabel(r"$z$")
-ax[0].legend()
+ax[0].legend(ncol=2, loc='upper center')
 ax[0].grid(ls=':')
 ax[0].tick_params(axis='x')
 ax[0].set_xticks([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5])
@@ -173,7 +199,7 @@ ax[0].set_xticks([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5])
 
 # Make upper frequency axis
 ax2 = ax[0].twiny()
-ax2.set_xlim(0.5, 2.6)
+ax2.set_xlim(0.5, 2.55)
 # ax2.set_ylim(0.96, 1.04)
 ax2.xaxis.tick_top()
 ax2.set_xticks([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5])
@@ -217,7 +243,7 @@ ax[1].text(0.9, 1.001, r"eBOSS LRG", c=colors[5], fontsize=12.)
 # Set aesthetics for lower panel
 #############
 
-ax[1].set_xlim(0.5, 2.6)
+ax[1].set_xlim(0.5, 2.55)
 ax[1].set_ylim(0.95, 1.05)
 ax[1].set_xlabel(r"$z$")
 ax[1].set_ylabel(r"$D_V \,/\, D_V^{\rm fid}$")
