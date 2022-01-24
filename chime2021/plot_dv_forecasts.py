@@ -26,7 +26,11 @@ cosmo = rf.experiments.cosmo
 names_fisher = ['gDESI_combinedmnu006', 'yCHIMEmnu006']
 names = ['gDESI_combinedmnu006', 'DESI_Lyalpha', 'yCHIMEmnu006']
 plot_colors = [colors[3], colors[0], colors[1]]
-plot_labels = ['DESI LRG+ELG+QSO', r'DESI Lyman-$\alpha$ Forest', 'CHIME']
+plot_labels = [
+    'DESI LRG+ELG+QSO', 
+    r'DESI Lyman-$\alpha$ Forest', 
+    'Ideal CHIME (no foregrounds/systematics)'
+]
 plot_ls = ['.', '.', '.']
 plot_offset = [0, 0.0, 0.03]
 
@@ -223,7 +227,7 @@ ax2.errorbar(
 
 # Show two legends: one with DESI, one with CHIME
 ax[0].legend()
-ax2.legend()
+ax2.legend(loc="lower left")
 
 
 #############
