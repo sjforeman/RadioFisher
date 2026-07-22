@@ -13,7 +13,12 @@ import shutil
 import numpy as np
 import scipy.integrate
 import scipy.interpolate
-from scipy.misc import derivative
+
+# --- compatibility with scipy >= 1.12/1.14 (removed simps/cumtrapz/misc) ---
+if not hasattr(scipy.integrate, "simps"):
+    scipy.integrate.simps = scipy.integrate.simpson
+if not hasattr(scipy.integrate, "cumtrapz"):
+    scipy.integrate.cumtrapz = scipy.integrate.cumulative_trapezoid
 import pylab as P
 import matplotlib.patches
 import matplotlib.cm
@@ -1508,6 +1513,43 @@ def Cnoise(q, y, cosmo, expt, cv=False):
     noise = Tsys**2. * Vsurvey / (npol * expt['ttot'] * expt['dnutot'])
     if cv: noise = 1. # Cosmic variance-limited calc.
 
+    # ------------------------------------------------------------------
+    # Time-domain RFI masking: frequency-dependent noise penalty.
+    #
+    # expt['noise_freq_weight']: vectorised callable w(nu_MHz) giving the
+    #   fraction of observing time that survives RFI masking at each
+    #   frequency (e.g. 1 - f_masked for a DTV channel). Return NaN for
+    #   frequency slices that are excised from the analysis entirely --
+    #   excised slices are excluded from the band average here, and their
+    #   information loss should be priced separately via expt['vol_frac'].
+    # expt['noise_freq_mode']: how slices combine across the bin's band:
+    #   'invvar'  (default): penalty = 1/<w>   (sample counting / optimal
+    #              inverse-variance weighting of surviving samples)
+    #   'fourier': penalty = <1/w>  (radial Fourier modes see the mean of
+    #              the per-slice noise power; pessimistic bracket)
+    # ------------------------------------------------------------------
+    if (not cv) and ('noise_freq_weight' in list(expt.keys())):
+        nulo = expt['_numin'] if '_numin' in list(expt.keys()) \
+               else nu - 0.5 * expt['dnutot']
+        nuhi = expt['_numax'] if '_numax' in list(expt.keys()) \
+               else nu + 0.5 * expt['dnutot']
+        nn_samp = np.linspace(nulo, nuhi, 2049)
+        ww = np.asarray(expt['noise_freq_weight'](nn_samp), dtype=float)
+        surviving = np.isfinite(ww)
+        if np.any(surviving):
+            wsurv = np.clip(ww[surviving], 1e-6, 1.)
+            mode_nf = expt['noise_freq_mode'] \
+                      if 'noise_freq_mode' in list(expt.keys()) else 'invvar'
+            if mode_nf == 'fourier':
+                penalty = np.mean(1. / wsurv)
+            elif mode_nf == 'invvar':
+                penalty = 1. / np.mean(wsurv)
+            else:
+                raise ValueError("noise_freq_mode must be 'invvar' or 'fourier'")
+            noise *= penalty
+        else:
+            noise *= INF_NOISE # whole bin excised
+
     # Multiply noise by mode-specific factors
     if expt['mode'][0] == 'i':
         # Interferometer mode
@@ -2657,6 +2699,7 @@ def fisher( zmin, zmax, cosmo, expt, cosmo_fns, return_pk=False, kbins=None,
     numin = expt['nu_line'] / (1. + zmax)
     numax = expt['nu_line'] / (1. + zmin)
     expt['dnutot'] = numax - numin
+    expt['_numin'] = numin; expt['_numax'] = numax # band edges (noise hooks)
     z = 0.5 * (zmax + zmin)
 
     # Load n(u) interpolation function, if needed
@@ -2674,8 +2717,11 @@ def fisher( zmin, zmax, cosmo, expt, cosmo_fns, return_pk=False, kbins=None,
     cosmo['switches'] = switches
 
     # Physical volume (in rad^2 Mpc^3) (note factor of nu_line in here)
+    # expt['vol_frac']: fraction of the bin's bandwidth surviving excision
+    # of RFI-dominated frequency slices (Fisher info scales with volume).
     Vphys = expt['Sarea'] * (expt['dnutot']/expt['nu_line']) \
           * cosmo['r']**2. * cosmo['rnu']
+    if 'vol_frac' in list(expt.keys()): Vphys *= expt['vol_frac']
     Vfac = np.pi * Vphys / (2. * np.pi)**3.
 
     # Set-up integration sample points in (k, u)-space
