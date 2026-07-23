@@ -1129,7 +1129,11 @@ def logpk_derivative(pk, kgrid):
     np.seterr(invalid='ignore')
     dP = pk(kgrid + 0.5*dk) / pk(kgrid - 0.5*dk)
     np.seterr(invalid=None)
-    dP[np.where(np.isnan(dP))] = 1. # Set NaN values to 1 (sets deriv. to zero)
+    # Set NaN and Inf values to 1 (sets deriv. to zero). Inf arises when a
+    # sample straddles the edge of the P(k) input range (pk=0 on one side);
+    # 0 * Inf = NaN would otherwise poison every Fisher row that adds a
+    # use_term-disabled alpha-shift contribution.
+    dP[~np.isfinite(dP)] = 1.
     dlogpk_dk = np.log(dP) / dk
     return dlogpk_dk
 
