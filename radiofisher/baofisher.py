@@ -48,8 +48,12 @@ RSD_FUNCTION = 'kaiser'
 # Default k_max for CAMB computations
 CAMB_KMAX = 20. / 0.7 # h Mpc^-1
 
-# Find directory containing CAMB executable
-CAMB_EXEC = os.path.dirname(shutil.which('camb'))
+# Find directory containing CAMB executable, if one is on the PATH.
+# CAMB_EXEC = None is fine for workflows that load a precomputed P(k)
+# cache (e.g. cached_camb_output with force_load=True); it only matters
+# if CAMB actually needs to be run.
+_camb_path = shutil.which('camb')
+CAMB_EXEC = os.path.dirname(_camb_path) if _camb_path else None
 
 
 ################################################################################
