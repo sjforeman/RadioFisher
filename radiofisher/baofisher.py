@@ -2122,6 +2122,29 @@ def fisher_integrands( kgrid, ugrid, cosmo, expt, massive_nu_fn=None,
     deriv_list.append(deriv_pk)
     paramnames.append('pk')
 
+    # Unmodelled additive residual power (e.g. RFI surviving a mask).
+    #
+    # An additive dP that the model does not include biases the recovered
+    # parameters at first order by  dtheta_i = sum_j (F^-1)_ij B_j  with
+    #   B_j = Vfac * Int K^2 (dlnP/dtheta_j)(cs/ctot) (dP/ctot) dk du.
+    # The first two factors are exactly deriv_list[j], so B_j is the integral
+    # of deriv_list[j] against (dP/ctot) -- the same integral the Fisher
+    # elements already perform. Appending dP/ctot as a pseudo-derivative
+    # therefore puts the whole bias vector in the last row/column of F, with
+    # no change to the integration machinery.
+    #
+    # expt['P_res'] is either a scalar multiple of the noise power (the
+    # natural form, since a measured residual-to-thermal ratio r is exactly
+    # that), or a callable f(k, u, cn, cs) returning dP on the (k,u) grid.
+    # The caller must strip the '_Pres' row/column before inverting F; the
+    # entry is a bias, not a parameter, and treating it as one would
+    # marginalise over the very contamination being tested.
+    if 'P_res' in list(expt.keys()):
+        pres = expt['P_res']
+        c_res = pres(k, u2**0.5, cn, cs) if callable(pres) else float(pres) * cn
+        deriv_list.append(c_res / ctot)
+        paramnames.append('_Pres')
+
     # Return derivs. Order is:
     # (A, bHI, Tb, sig2, sigma8, ns, f, aperp, apar, [Mnu], [Neff], [fNL],
     # [MG parameters], pk)
@@ -2773,6 +2796,11 @@ def fisher( zmin, zmax, cosmo, expt, cosmo_fns, return_pk=False, kbins=None,
                                             cv_limited=cv_limited,
                                             switches=switches )
     F = Vfac * integrate_fisher_elements(derivs, kgrid, ugrid)
+
+    if return_pk and 'P_res' in list(expt.keys()):
+        raise NotImplementedError(
+            "return_pk assumes deriv_pk is the last integrand; it cannot be "
+            "combined with expt['P_res']. Run them separately.")
 
     # Calculate cross-terms between binned P(k) and other params
     if return_pk:
