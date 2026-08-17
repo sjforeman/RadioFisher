@@ -3,7 +3,8 @@
 Perform HI survey Fisher forecast based on Pedro's formalism (see notes from
 August 2013).
 
-Requires up-to-date NumPy, SciPy (tested with version 0.11.0) and matplotlib.
+Requires NumPy, SciPy, and Matplotlib; supported versions are declared in
+``pyproject.toml``.
 A number of functions can optionally use MPI (mpi4py).
 
 (Phil Bull & Pedro G. Ferreira, 2013--2014)
@@ -30,6 +31,17 @@ from . import mg_growth
 from tempfile import gettempdir
 
 from .castorina import castorinaBias,castorinaPn
+from .astrophysics import (
+    resolve_astrophysical_models,
+    validate_astrophysical_model,
+)
+from .extensions import (
+    DEFAULT_NOISE_FREQ_MODE,
+    NOISE_FREQUENCY_SAMPLES,
+    frequency_noise_penalty,
+    validate_experiment_extensions,
+    validate_volume_fraction,
+)
 
 # No. of samples in log space in each dimension. 300 seems stable for (AA).
 NSAMP_K = 500 # 1000
@@ -47,6 +59,10 @@ RSD_FUNCTION = 'kaiser'
 
 # Default k_max for CAMB computations
 CAMB_KMAX = 20. / 0.7 # h Mpc^-1
+
+# Conversion used by CAMB/Planck for sum(m_nu) [eV] -> Omega_nu h^2.
+NEUTRINO_MASS_DENSITY_EV = 93.04
+N_IM_VOLUME_SAMPLES = 1000
 
 # Find directory containing CAMB executable, if one is on the PATH.
 # CAMB_EXEC = None is fine for workflows that load a precomputed P(k)
@@ -70,7 +86,8 @@ def figure_of_merit(p1, p2, F, cov=None, twosigma=False):
     If twosigma=True, there is an additional factor of 1/4 that comes from
     looking at the 95% (2-sigma) contours.
     """
-    if cov == None: cov = np.linalg.inv(F)
+    if cov is None:
+        cov = np.linalg.inv(F)
 
     # Calculate determinant
     c11 = cov[p1,p1]
@@ -124,20 +141,20 @@ def plot_ellipse(F, p1, p2, fiducial, names, ax=None):
     """
     Show error ellipse for 2 parameters from Fisher matrix.
     """
-    alpha = [1.52, 2.48, 3.44] # 1/2/3-sigma scalings, from Table 1 of arXiv:0906.4123
-
     # Get ellipse parameters
     x, y = fiducial
-    a, b, ang = ellipse_for_fisher_params(p1, p2, F)
+    a, b, ang, alpha = ellipse_for_fisher_params(p1, p2, F)
 
     # Get 1,2,3-sigma ellipses and plot
     ellipses = [matplotlib.patches.Ellipse(xy=(x, y), width=alpha[k]*b,
                  height=alpha[k]*a, angle=ang, fc='none') for k in range(0, 2)]
-    if ax is None: ax = P.subplot(111)
+    created_ax = ax is None
+    if created_ax:
+        ax = P.subplot(111)
     for e in ellipses: ax.add_patch(e)
     ax.plot(x, y, 'bx')
 
-    if ax is None:
+    if created_ax:
         ax.set_xlabel(names[0])
         ax.set_ylabel(names[1])
         P.show()
@@ -164,7 +181,9 @@ def triangle_plot(fiducial, F, names, priors=None, skip=None):
 
         # Plot 2D contours
         if j > i:
-          a, b, ang = ellipse_for_fisher_params(i, j, F=None, Finv=Finv)
+          a, b, ang, alpha = ellipse_for_fisher_params(
+              i, j, F=None, Finv=Finv
+          )
 
           # Get 1,2,3-sigma ellipses and plot
           ellipses = [matplotlib.patches.Ellipse(xy=(x, y), width=alpha[k]*b,
@@ -437,7 +456,7 @@ def zbins_split_width(expt, dz=(0.1, 0.3), zsplit=2.):
     # Special case if zmin > zsplit or zmax < zsplit
     if (zmin > zsplit) or (zmax < zsplit):
         _dz = dz[0] if (zmax < zsplit) else dz[1]
-        nbins = np.floor((zmax - zmin) / _dz)
+        nbins = int(np.floor((zmax - zmin) / _dz))
         zs = np.linspace(zmin, zmin + nbins*_dz, nbins+1)
 
         if (zmax - zs[-1]) > 0.2 * _dz:
@@ -446,11 +465,19 @@ def zbins_split_width(expt, dz=(0.1, 0.3), zsplit=2.):
         return zs, zc
 
     # Fill first range with equal-sized bins with width dz[0]
-    nbins = np.ceil((zsplit - zmin) / dz[0])
+    nbins = int(np.ceil((zsplit - zmin) / dz[0]))
     z1 = np.linspace(zmin, zmin + nbins*dz[0], nbins+1)
 
+    # A narrow band can straddle zsplit while ending before the first full
+    # low-redshift bin does. Truncate that final bin instead of passing a
+    # negative sample count to np.linspace below.
+    if z1[-1] >= zmax:
+        z1[-1] = zmax
+        zc = 0.5 * (z1[1:] + z1[:-1])
+        return z1, zc
+
     # Fill remaining range with equal-sized bins with width dz[1]
-    nbins = np.floor((zmax - z1[-1]) / dz[1])
+    nbins = int(np.floor((zmax - z1[-1]) / dz[1]))
     z2 = np.linspace(z1[-1] + dz[1], z1[-1] + nbins*dz[1], nbins)
     zs = np.concatenate((z1, z2))
 
@@ -498,7 +525,7 @@ def overlapping_expts(expt_in, zlow=None, zhigh=None, Sarea=None):
     # Copy everything over from expt_in
     expt = {}
     for key in list(expt_in.keys()):
-        if key is not 'overlap': expt[key] = expt_in[key]
+        if key != 'overlap': expt[key] = expt_in[key]
 
     # If no low/high is specified, just return extended freq. range (useful for
     # redshift binning)
@@ -595,8 +622,7 @@ def load_power_spectrum( cosmo, cachefile, kmax=CAMB_KMAX, comm=None,
     p['transfer_k_per_logint'] = 250 #1000
 
     # Check for massive neutrinos
-    if cosmo['mnu'] > 0.001:
-        p['omnuh2'] = cosmo['mnu'] / 93.04
+    if p['omnuh2'] > 0.001 / NEUTRINO_MASS_DENSITY_EV:
         p['massless_neutrinos'] = 2.046
         p['massive_neutrinos'] = "2 1"
         p['nu_mass_eigenstates'] = 1
@@ -752,13 +778,18 @@ def Tb(z, cosmo, formula='hall'):
      * 'santos': obtained using a simple power-law fit to Mario's data.
        (Best-fit Tb: 0.1376)
      * 'powerlaw': simple power-law fit to Mario's updated data (powerlaw M_HI
-       function with alpha=0.6) (Default)
+       function with alpha=0.6)
      * 'hall': from Hall, Bonvin, and Challinor.
      * 'chang': from Chang et al.
 
     Default: 'hall'
     """
-    omegaHI = omega_HI(z, cosmo)
+    formula = validate_astrophysical_model("Tb_model", formula)
+    if formula in ("chang", "hall"):
+        omega_hi_formula = validate_astrophysical_model(
+            "omega_HI_model", cosmo.get("omega_HI_model", "crighton")
+        )
+        omegaHI = omega_HI(z, cosmo, formula=omega_hi_formula)
     if formula == 'santos':
         Tb = 0.1376 * (1. + 1.44*z - 0.277*z**2.)
     elif formula == 'powerlaw':
@@ -767,7 +798,7 @@ def Tb(z, cosmo, formula='hall'):
         Tb = 0.3 * (omegaHI/1e-3) * np.sqrt(0.29*(1.+z)**3.)
         Tb *= np.sqrt((1.+z)/2.5)
         Tb /= np.sqrt(cosmo['omega_M_0']*(1.+z)**3. + cosmo['omega_lambda_0'])
-    else:
+    elif formula == 'hall':
         # From Hall et al.
         om = cosmo['omega_M_0']; ol = cosmo['omega_lambda_0']
         ok = 1. - om - ol
@@ -782,12 +813,13 @@ def bias_HI(z, cosmo, formula='castorina'):
     or using the model from Emanuele Castorina (lifted from the PUMANoise
     code.) Default: 'castorina'
     """
+    formula = validate_astrophysical_model("bias_HI_model", formula)
     if formula == 'old':
         return cosmo['bHI0'] * (1. + 3.80e-1*z + 6.7e-2*z**2.)
     elif formula == 'powerlaw':
         return (cosmo['bHI0'] / 0.677105) \
              * (6.6655e-01 + 1.7765e-01*z + 5.0223e-02*z**2.)
-    else:
+    elif formula == 'castorina':
         return castorinaBias(z)
 
 
@@ -797,13 +829,14 @@ def omega_HI(z, cosmo, formula='crighton'):
     or to the fit from Crighton et al. 2015.
     Default: 'crighton'
     """
+    formula = validate_astrophysical_model("omega_HI_model", formula)
     if formula == 'old':
         # Old formula, a polynomial fit to Mario's old data
         return cosmo['omega_HI_0'] * (1. + 4.77e-2*z - 3.72e-2*z**2.)
     elif formula == 'powerlaw':
         return (cosmo['omega_HI_0'] / 0.000486) \
              * (4.8304e-04 + 3.8856e-04*z - 6.5119e-05*z**2.)
-    else:
+    elif formula == 'crighton':
         return 4e-4 * (1 + z)**0.6
 
 def omegaM_z(z, cosmo):
@@ -829,15 +862,80 @@ def inverse_interpfn(f):
         ff[idxs] = 1. / f[idxs]
     return ff
 
+def _nonnegative_finite(value, name):
+    """Return a non-negative finite scalar cosmological density."""
+    if isinstance(value, (bool, np.bool_)) or not np.isscalar(value):
+        raise TypeError("%s must be a real scalar" % name)
+    result = float(value)
+    if not np.isfinite(result) or result < 0.0:
+        raise ValueError("%s must be finite and non-negative" % name)
+    return result
+
+
+def physical_density_parameters(cosmo):
+    """Resolve baryon, cold-dark-matter, and neutrino physical densities.
+
+    Explicit ``ombh2``, ``omch2``, and ``omnuh2`` keys take precedence and
+    must be supplied as a complete triplet.  An explicit ``omnuh2`` is
+    authoritative if it differs from the value implied by ``mnu``. For
+    legacy dictionaries, ``omega_M_0`` is treated as total matter, including
+    massive neutrinos, so neutrinos are not also counted as cold dark matter.
+    Set ``omega_M_0_includes_neutrinos=False`` to preserve a convention where
+    ``omega_M_0`` contains only baryons and cold dark matter.
+    """
+    explicit_density_keys = {"ombh2", "omch2", "omnuh2"}
+    supplied_density_keys = explicit_density_keys.intersection(cosmo)
+    if supplied_density_keys and supplied_density_keys != explicit_density_keys:
+        missing = sorted(explicit_density_keys - supplied_density_keys)
+        raise ValueError(
+            "explicit physical densities must be supplied together; missing %s"
+            % ", ".join(missing)
+        )
+
+    h = _nonnegative_finite(cosmo["h"], "h")
+    if h == 0.0:
+        raise ValueError("h must be greater than zero")
+
+    if "ombh2" in cosmo:
+        ombh2 = _nonnegative_finite(cosmo["ombh2"], "ombh2")
+    else:
+        ombh2 = _nonnegative_finite(cosmo["omega_b_0"], "omega_b_0") * h**2
+
+    if "omnuh2" in cosmo:
+        omnuh2 = _nonnegative_finite(cosmo["omnuh2"], "omnuh2")
+    else:
+        mnu = _nonnegative_finite(cosmo.get("mnu", 0.0), "mnu")
+        omnuh2 = mnu / NEUTRINO_MASS_DENSITY_EV
+
+    if "omch2" in cosmo:
+        omch2 = _nonnegative_finite(cosmo["omch2"], "omch2")
+    else:
+        includes_neutrinos = cosmo.get(
+            "omega_M_0_includes_neutrinos", True
+        )
+        if not isinstance(includes_neutrinos, (bool, np.bool_)):
+            raise TypeError("omega_M_0_includes_neutrinos must be a boolean")
+        total_matter_h2 = (
+            _nonnegative_finite(cosmo["omega_M_0"], "omega_M_0") * h**2
+        )
+        omch2 = total_matter_h2 - ombh2
+        if includes_neutrinos:
+            omch2 -= omnuh2
+        if omch2 < 0.0:
+            raise ValueError(
+                "resolved omch2 is negative; check the matter-density convention"
+            )
+
+    return {"ombh2": ombh2, "omch2": omch2, "omnuh2": omnuh2}
+
+
 def convert_to_camb(cosmo):
     """
     Convert cosmological parameters to CAMB parameters.
     (N.B. CAMB derives Omega_Lambda from other density parameters)
     """
-    p = {}
+    p = physical_density_parameters(cosmo)
     p['hubble'] = 100.*cosmo['h']
-    p['omch2'] = (cosmo['omega_M_0'] - cosmo['omega_b_0']) * cosmo['h']**2.
-    p['ombh2'] = cosmo['omega_b_0'] * cosmo['h']**2.
     p['omk'] = 1. - (cosmo['omega_M_0'] + cosmo['omega_lambda_0'])
     p['scalar_spectral_index__1___'] = cosmo['ns']
     p['w'] = cosmo['w0']
@@ -854,7 +952,7 @@ def cached_camb_output(p, cachefile, cosmo=None, mode='matterpower',
     keys = list(p.keys())
     keys.sort()
     for key in keys:
-        if key is not "output_root":
+        if key != "output_root":
             keyval = "%s:%s" % (key, p[key])
             m.update(keyval.encode())
     in_hash = m.hexdigest()
@@ -1058,13 +1156,13 @@ def deriv_neutrinos(cosmo, cacheroot, kmax=CAMB_KMAX, force=False,
         # Set neutrino density and choose one massive neutrino species
         # (Converts Sum(m_nu) [in eV] into Omega_nu h^2, using expression from
         # p5 of Planck 2013 XVI.)
-        p['omnuh2'] = mnu / 93.04
+        p['omnuh2'] = mnu / NEUTRINO_MASS_DENSITY_EV
         p['massless_neutrinos'] = Neff - 1.
         p['massive_neutrinos'] = "2 1"
         p['nu_mass_eigenstates'] = 1
         deriv_param = 'omnuh2'
         x = p['omnuh2']
-        dx = dmnu / 93.04
+        dx = dmnu / NEUTRINO_MASS_DENSITY_EV
         dp = dmnu
     else:
         # Neff derivative
@@ -1128,16 +1226,16 @@ def logpk_derivative(pk, kgrid):
     """
     # Calculate dlog(P(k))/dk using central difference technique
     # (Sets lowest-k values to zero since P(k) not defined there)
-    # (Suppresses div/0 error temporarily)
+    # Suppress expected boundary divisions locally without changing NumPy's
+    # process-global floating-point error policy.
     dk = 1e-7
-    np.seterr(invalid='ignore')
-    dP = pk(kgrid + 0.5*dk) / pk(kgrid - 0.5*dk)
-    np.seterr(invalid=None)
-    # Set NaN and Inf values to 1 (sets deriv. to zero). Inf arises when a
-    # sample straddles the edge of the P(k) input range (pk=0 on one side);
-    # 0 * Inf = NaN would otherwise poison every Fisher row that adds a
-    # use_term-disabled alpha-shift contribution.
-    dP[~np.isfinite(dP)] = 1.
+    with np.errstate(divide='ignore', invalid='ignore'):
+        dP = pk(kgrid + 0.5*dk) / pk(kgrid - 0.5*dk)
+    # Set invalid and non-positive ratios to 1 (sets deriv. to zero). These
+    # values arise when a sample straddles the edge of the P(k) input range
+    # (pk=0 on one side); logging them would otherwise produce infinities that
+    # poison every Fisher row that adds an alpha-shift contribution.
+    dP[(~np.isfinite(dP)) | (dP <= 0.)] = 1.
     dlogpk_dk = np.log(dP) / dk
     return dlogpk_dk
 
@@ -1503,6 +1601,7 @@ def Cnoise(q, y, cosmo, expt, cv=False):
     A Fourier-space beam has been applied to act as a filter over the survey
     volume. Units: mK^2.
     """
+    validate_experiment_extensions(expt)
     c = cosmo
     kperp = q / (c['aperp']*c['r'])
     kpar = y / (c['apar']*c['rnu'])
@@ -1541,22 +1640,14 @@ def Cnoise(q, y, cosmo, expt, cv=False):
                else nu - 0.5 * expt['dnutot']
         nuhi = expt['_numax'] if '_numax' in list(expt.keys()) \
                else nu + 0.5 * expt['dnutot']
-        nn_samp = np.linspace(nulo, nuhi, 2049)
-        ww = np.asarray(expt['noise_freq_weight'](nn_samp), dtype=float)
-        surviving = np.isfinite(ww)
-        if np.any(surviving):
-            wsurv = np.clip(ww[surviving], 1e-6, 1.)
-            mode_nf = expt['noise_freq_mode'] \
-                      if 'noise_freq_mode' in list(expt.keys()) else 'invvar'
-            if mode_nf == 'fourier':
-                penalty = np.mean(1. / wsurv)
-            elif mode_nf == 'invvar':
-                penalty = 1. / np.mean(wsurv)
-            else:
-                raise ValueError("noise_freq_mode must be 'invvar' or 'fourier'")
-            noise *= penalty
-        else:
-            noise *= INF_NOISE # whole bin excised
+        frequencies_mhz = np.linspace(nulo, nuhi, NOISE_FREQUENCY_SAMPLES)
+        mode_nf = expt.get('noise_freq_mode', DEFAULT_NOISE_FREQ_MODE)
+        penalty = frequency_noise_penalty(
+            expt['noise_freq_weight'], frequencies_mhz, mode=mode_nf
+        )
+        if np.isinf(penalty):
+            return np.full(np.broadcast(q, y).shape, INF_NOISE, dtype=float)
+        noise *= penalty
 
     # Multiply noise by mode-specific factors
     if expt['mode'][0] == 'i':
@@ -1615,7 +1706,7 @@ def Cnoise(q, y, cosmo, expt, cv=False):
             # Calculate properties of sub-array 2
             Aeff2 = effic2 * 0.25 * np.pi * expt['Ddish2']**2. \
                     if 'Aeff2' not in list(expt.keys()) else expt['Aeff2']
-            Tsys2 - Tsys_tot(z, expt, inst_label='Tinst2')
+            Tsys2 = Tsys_tot(c['z'], expt, inst_label='Tinst2')
             theta_b2 = l / expt['Ddish2']
             Nd1 = expt['Ndish']; Nd2 = expt['Ndish2']
 
@@ -1768,13 +1859,44 @@ def Cfg(q, y, cosmo, expt):
     return expt['epsilon_fg']**2. * Cfg
 
 
-def n_IM(kgrid, ugrid, cosmo, expt):
+def n_IM(kgrid, ugrid, cosmo, expt, zmin=None, zmax=None, cosmo_fns=None):
     """
     Effective "galaxy redshift survey" number density for IM survey. Unlike for
     a galaxy redshift survey, this is actually a (strong) function of (k, mu),
     so simply integrating over it to give n(z) doesn't necessarily give
-    sensible results.
+    sensible results. ``zmin``, ``zmax``, and ``cosmo_fns`` are required for
+    the survey-volume calculation; older versions referenced undeclared
+    globals for these values.
     """
+    if zmin is None or zmax is None or cosmo_fns is None:
+        raise ValueError(
+            "n_IM requires explicit zmin, zmax, and cosmo_fns=(H, r, D, f)"
+        )
+    if isinstance(zmin, (bool, np.bool_)) or isinstance(zmax, (bool, np.bool_)):
+        raise TypeError("zmin and zmax must be real scalars")
+    try:
+        zmin = float(zmin)
+        zmax = float(zmax)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("zmin and zmax must be real scalars") from exc
+    if not np.isfinite(zmin) or not np.isfinite(zmax) or zmin < 0.0 or zmax <= zmin:
+        raise ValueError("n_IM requires finite redshifts with 0 <= zmin < zmax")
+    try:
+        HH, rr = cosmo_fns[:2]
+    except (TypeError, ValueError) as exc:
+        raise TypeError("cosmo_fns must be a sequence beginning with H(z), r(z)") from exc
+    if not callable(HH) or not callable(rr):
+        raise TypeError("cosmo_fns must begin with callable H(z) and r(z)")
+
+    kgrid = np.asarray(kgrid, dtype=float)
+    ugrid = np.asarray(ugrid, dtype=float)
+    if kgrid.ndim != 1 or kgrid.size < 2 or not np.all(np.isfinite(kgrid)) \
+            or np.any(kgrid <= 0.0):
+        raise ValueError("kgrid must be a one-dimensional positive finite grid")
+    if ugrid.ndim != 1 or ugrid.size < 2 or not np.all(np.isfinite(ugrid)) \
+            or np.any(np.abs(ugrid) > 1.0):
+        raise ValueError("ugrid must be a one-dimensional finite grid in [-1, 1]")
+
     # Convert (k, u) into (q, y)
     K, U = np.meshgrid(kgrid, ugrid)
     y = cosmo['rnu'] * K * U
@@ -1784,9 +1906,22 @@ def n_IM(kgrid, ugrid, cosmo, expt):
     n_z *= cosmo['Tb']**2. / (cosmo['r']**2. * cosmo['rnu'])
 
     # Calculate Vsurvey
-    _z = np.linspace(zmin, zmax, 1000)
-    Vsurvey = C * scipy.integrate.simpson(rr(_z)**2. / HH(_z), x=_z)
-    Vsurvey *= (4.*np.pi) * expt['Sarea'] / (4.*np.pi)
+    _z = np.linspace(zmin, zmax, N_IM_VOLUME_SAMPLES)
+    H_samples = np.asarray(HH(_z), dtype=float)
+    r_samples = np.asarray(rr(_z), dtype=float)
+    if H_samples.ndim == 0:
+        H_samples = np.full(_z.shape, float(H_samples))
+    if r_samples.ndim == 0:
+        r_samples = np.full(_z.shape, float(r_samples))
+    if H_samples.shape != _z.shape or r_samples.shape != _z.shape:
+        raise ValueError("H(z) and r(z) must return arrays matching the redshift grid")
+    if np.any(~np.isfinite(H_samples)) or np.any(H_samples <= 0.0) \
+            or np.any(~np.isfinite(r_samples)):
+        raise ValueError("H(z) and r(z) returned invalid values")
+    survey_area = _nonnegative_finite(expt['Sarea'], "Sarea")
+    Vsurvey = C * survey_area * scipy.integrate.simpson(
+        r_samples**2. / H_samples, x=_z
+    )
 
     return n_z, Vsurvey
 
@@ -2424,10 +2559,17 @@ def add_fisher_matrices(F1, F2, lbls1, lbls2, info=False, expand=False):
         return Fnew
 
 
-def add_fisher_list(F_list, lbls_list, exclude=[], info=False, expand=False):
+def add_fisher_list(F_list, lbls_list, exclude=None, info=False, expand=False):
     """
     Combine a list of Fisher matrices together, using add_fisher_matrices().
     """
+    if len(F_list) != len(lbls_list):
+        raise ValueError("F_list and lbls_list must have the same length")
+    if not F_list:
+        raise ValueError("F_list must not be empty")
+    if exclude is None:
+        exclude = []
+
     F = None
     lbls = None
 
@@ -2436,10 +2578,16 @@ def add_fisher_list(F_list, lbls_list, exclude=[], info=False, expand=False):
         if F is None: # Initial value
             F = _F; lbls = _lbls
         else:
-            F, lbls = add_fisher_matrices(F, _F, lbls, _lbls, info=info, expand=expand)
+            result = add_fisher_matrices(
+                F, _F, lbls, _lbls, info=info, expand=expand
+            )
+            if expand:
+                F, lbls = result
+            else:
+                F = result
 
     # Remove any unwanted parameters
-    if exclude is not []:
+    if exclude:
         F, lbls = combined_fisher_matrix([F,], names=lbls, exclude=exclude)
     return F, lbls
 
@@ -2673,7 +2821,9 @@ def fisher( zmin, zmax, cosmo, expt, cosmo_fns, return_pk=False, kbins=None,
         Redshift window of survey
 
     cosmo : dict
-        Dictionary of fiducial cosmological parameters
+        Dictionary of fiducial cosmological parameters. Optional validated
+        signal-model keys are ``astrophysical_model_profile``, ``Tb_model``,
+        ``bias_HI_model``, and ``omega_HI_model``.
 
     expt : dict
         Dictionary of experimental parameters
@@ -2718,6 +2868,9 @@ def fisher( zmin, zmax, cosmo, expt, cosmo_fns, return_pk=False, kbins=None,
     # Copy, to make sure we don't modify input expt or cosmo
     cosmo = copy.deepcopy(cosmo)
     expt = copy.deepcopy(expt)
+    validate_experiment_extensions(expt)
+    astrophysical_models = resolve_astrophysical_models(cosmo)
+    cosmo.update(astrophysical_models)
 
     # Fetch/precompute cosmology functions
     HH, rr, DD, ff = cosmo_fns
@@ -2739,9 +2892,15 @@ def fisher( zmin, zmax, cosmo, expt, cosmo_fns, return_pk=False, kbins=None,
         expt['n(x)'] = load_interferom_file(expt['n(x)'])
 
     # Pack values and functions into the dictionaries cosmo, expt
-    cosmo['omega_HI'] = omega_HI(z, cosmo)
-    cosmo['bHI'] = bias_HI(z, cosmo)
-    cosmo['Tb'] = Tb(z, cosmo)
+    cosmo['omega_HI'] = omega_HI(
+        z, cosmo, formula=astrophysical_models['omega_HI_model']
+    )
+    cosmo['bHI'] = bias_HI(
+        z, cosmo, formula=astrophysical_models['bias_HI_model']
+    )
+    cosmo['Tb'] = Tb(
+        z, cosmo, formula=astrophysical_models['Tb_model']
+    )
     cosmo['z'] = z; cosmo['D'] = DD(z)
     cosmo['f'] = ff(z) if 'mg' not in switches else None
     cosmo['r'] = rr(z); cosmo['rnu'] = C*(1.+z)**2. / HH(z) # Perp/par. dist. scales
@@ -2752,7 +2911,8 @@ def fisher( zmin, zmax, cosmo, expt, cosmo_fns, return_pk=False, kbins=None,
     # of RFI-dominated frequency slices (Fisher info scales with volume).
     Vphys = expt['Sarea'] * (expt['dnutot']/expt['nu_line']) \
           * cosmo['r']**2. * cosmo['rnu']
-    if 'vol_frac' in list(expt.keys()): Vphys *= expt['vol_frac']
+    if 'vol_frac' in list(expt.keys()):
+        Vphys *= validate_volume_fraction(expt['vol_frac'])
     Vfac = np.pi * Vphys / (2. * np.pi)**3.
 
     # Set-up integration sample points in (k, u)-space
@@ -2830,12 +2990,3 @@ def fisher( zmin, zmax, cosmo, expt, cosmo_fns, return_pk=False, kbins=None,
     # Return results
     if return_pk: return F_pk, kc, binning_info, paramnames
     return F, paramnames
-
-
-class FisherMatrix(object):
-
-    def __init__(self):
-        """
-        Fisher matrix object.
-        """
-        F = 0
