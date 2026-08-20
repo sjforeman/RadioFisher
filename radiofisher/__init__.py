@@ -22,7 +22,9 @@ from .extensions import (
     NOISE_FREQUENCY_SAMPLES,
     NOISE_FREQ_MODES,
     frequency_noise_penalty,
+    residual_power,
     validate_experiment_extensions,
+    validate_residual_power,
     validate_volume_fraction,
 )
 from .resources import (
@@ -98,7 +100,9 @@ __all__ = [
     "NOISE_FREQUENCY_SAMPLES",
     "NOISE_FREQ_MODES",
     "frequency_noise_penalty",
+    "residual_power",
     "validate_experiment_extensions",
+    "validate_residual_power",
     "validate_volume_fraction",
     "UnavailableExperimentData",
     "UnsupportedExperimentDataError",

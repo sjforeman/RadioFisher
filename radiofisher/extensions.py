@@ -35,6 +35,63 @@ def validate_volume_fraction(value):
     return fraction
 
 
+def validate_residual_power(value):
+    """Validate an additive residual-power specification.
+
+    A scalar is the non-negative residual-to-thermal power ratio.  A callable
+    cannot be evaluated until the Fisher grid is available, so this boundary
+    only verifies that it is callable; :func:`residual_power` validates its
+    returned values before they enter an integrand.
+    """
+
+    if callable(value):
+        return value
+    ratio = _finite_scalar(value, "P_res")
+    if ratio < 0.0:
+        raise ValueError("P_res must be non-negative")
+    return ratio
+
+
+def residual_power(value, k, u, noise_power, signal_power):
+    """Evaluate and validate ``P_res`` on a Fisher integration grid.
+
+    Callable results may be scalar or broadcastable to the common input grid.
+    Every resulting power value must be finite and non-negative; NaNs and
+    infinities are never interpreted as excision in this bias-response path.
+    """
+
+    target_shape = np.broadcast_shapes(
+        np.shape(k), np.shape(u), np.shape(noise_power), np.shape(signal_power)
+    )
+    if callable(value):
+        raw = value(k, u, noise_power, signal_power)
+        raw_array = np.asarray(raw)
+        if raw_array.dtype.kind == "b" or np.iscomplexobj(raw_array):
+            raise TypeError("P_res callable must return real numeric power values")
+        try:
+            values = np.asarray(raw, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                "P_res callable must return real numeric power values"
+            ) from exc
+    else:
+        ratio = validate_residual_power(value)
+        values = ratio * np.asarray(noise_power, dtype=float)
+
+    try:
+        values = np.broadcast_to(values, target_shape)
+    except ValueError as exc:
+        raise ValueError(
+            "P_res callable returned shape %s, which is not broadcastable to %s"
+            % (np.shape(values), target_shape)
+        ) from exc
+    if not np.all(np.isfinite(values)):
+        raise ValueError("P_res must produce only finite power values")
+    if np.any(values < 0.0):
+        raise ValueError("P_res must produce non-negative power values")
+    return values
+
+
 def validate_experiment_extensions(expt):
     """Fail closed when optional experiment extension values are malformed.
 
@@ -59,6 +116,9 @@ def validate_experiment_extensions(expt):
 
     if "vol_frac" in expt:
         validate_volume_fraction(expt["vol_frac"])
+
+    if "P_res" in expt:
+        validate_residual_power(expt["P_res"])
 
 
 def frequency_noise_penalty(

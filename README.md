@@ -47,7 +47,9 @@ The capability set is immutable. Backend API version 1 supports explicit
 physical densities, named astrophysical-model profiles,
 frequency-dependent noise weights in `invvar` or `fourier` mode, a surviving
 survey-volume fraction, and the `P_res` additive-bias response. Extension
-values are validated and malformed inputs fail closed.
+values are validated and malformed inputs fail closed. Scalar `P_res` values
+must be finite and non-negative; callable outputs must be real, finite,
+non-negative, and broadcastable to the Fisher integration grid.
 
 The package release is 1.0.0, while the backend API remains version 1 because
 these integration semantics did not change during the cleanup.

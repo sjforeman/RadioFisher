@@ -39,6 +39,7 @@ from .extensions import (
     DEFAULT_NOISE_FREQ_MODE,
     NOISE_FREQUENCY_SAMPLES,
     frequency_noise_penalty,
+    residual_power,
     validate_experiment_extensions,
     validate_volume_fraction,
 )
@@ -2275,8 +2276,7 @@ def fisher_integrands( kgrid, ugrid, cosmo, expt, massive_nu_fn=None,
     # entry is a bias, not a parameter, and treating it as one would
     # marginalise over the very contamination being tested.
     if 'P_res' in list(expt.keys()):
-        pres = expt['P_res']
-        c_res = pres(k, u2**0.5, cn, cs) if callable(pres) else float(pres) * cn
+        c_res = residual_power(expt['P_res'], k, u2**0.5, cn, cs)
         deriv_list.append(c_res / ctot)
         paramnames.append('_Pres')
 
